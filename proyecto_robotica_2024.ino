@@ -93,8 +93,34 @@ void gradualDescent() {
 
   // Suponiendo que tienes la altitud actual del dron en una variable
   short currentAltitude = getCurrentAltitude(); // Altitud actual en cm
-  short targetAltitude = (currentAltitude - 15)*10;  // Bajar 15 cm y transformar a milimetros
-T,  // Comando para moverse a una posición específica (cambiamos solo la altitud)
+  short targetAltitude = (currentAltitude - 15) * 10;  // Bajar 15 cm y convertir a milimetros
+
+  // Evitar altitudes negativas o muy cercanas al suelo
+  if ( medirDistancia(11) < 30) {
+    targetAltitude = (currentAltitude - 20) * 10; // Bajar 20 cm
+    mavlink_msg_command_long_pack(
+      1,     // ID del sistema (por lo general 1 para el dron)
+      200,   // ID del componente (normalmente 200 para el controlador de vuelo)
+      &msg,
+      1,     // Target system (ID del dron)
+      0,     // Target component (ID del componente)
+      MAV_CMD_NAV_WAYPOINT,  // Comando para moverse a una posición específica (cambiamos solo la altitud)
+      0,     // Confirmation
+      0, 0, targetAltitude, 0, 0, 0, 0  // Solo configuramos la altitud en el tercer parámetro
+    );
+    uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
+    Serial.write(mavlinkBuf, len);
+    desarmarDron(); // Desarmar el dron si está muy cerca del suelo
+  }
+
+  // Comando para cambiar la altitud objetivo
+  mavlink_msg_command_long_pack(
+    1,     // ID del sistema (por lo general 1 para el dron)
+    200,   // ID del componente (normalmente 200 para el controlador de vuelo)
+    &msg,
+    1,     // Target system (ID del dron)
+    0,     // Target component (ID del componente)
+    MAV_CMD_NAV_WAYPOINT,  // Comando para moverse a una posición específica (cambiamos solo la altitud)
     0,     // Confirmation
     0, 0, targetAltitude, 0, 0, 0, 0  // Solo configuramos la altitud en el tercer parámetro
   );
@@ -102,6 +128,7 @@ T,  // Comando para moverse a una posición específica (cambiamos solo la altit
   uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
   Serial.write(mavlinkBuf, len);
 }
+
 
 // Función para avanzar una distancia específica en metros
 void moveForward() {
@@ -165,41 +192,6 @@ void subirDron(int alturaInicial) {
   Serial.write(mavlinkBuf, len);
 }
 
-
-// Función para continuar el plan de vuelo
-void continuarPlanDeVuelo() {
-    mavlink_message_t msg;
-
-    // Cambiar al modo automático para retomar el plan de vuelo
-    mavlink_msg_command_long_pack(
-        1,                         // ID del sistema
-        MAV_COMP_ID_SYSTEM_CONTROL,// ID del componente
-        &msg,
-        1,                         // Destino: ID del sistema
-        MAV_COMP_ID_AUTOPILOT1,    // Componente
-        MAV_CMD_DO_SET_MODE,       // Comando para establecer modo de vuelo
-        0,                         // Confirmación
-        4,                         // Modo automático (4 para AUTO)
-        0, 0, 0, 0, 0, 0          // Otros parámetros no usados
-    );
-
-    uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
-    Serial.write(mavlinkBuf, len);
-}
-ong_pack(
-    1,     // ID del sistema (por lo general 1 para el dron)
-    200,   // ID del componente (normalmente 200 para el controlador de vuelo)
-    &msg,
-    1,     // Target system (ID del dron)
-    0,     // Target component (ID del componente)
-    MAV_CMD_NAV_WAYPOINT,  // Comando para moverse a una posición específica (cambiamos solo la altitud)
-    0,     // Confirmation
-    0, 0, targetAltitude, 0, 0, 0, 0  // Solo configuramos la altitud en el tercer parámetro
-  );
-
-  uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
-  Serial.write(mavlinkBuf, len);
-}
 
 // Función para avanzar una distancia específica en metros
 void moveForward() {
