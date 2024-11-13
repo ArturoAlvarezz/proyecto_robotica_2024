@@ -31,7 +31,7 @@ void loop() {
     moveForward(); // Avanzar la distancia especificada
     subirDron(alturaInicial); // Subir la misma distancia que bajamos
   } else {
-    continuarPlanDeVuelo(); // Si no hay obstáculos, continuar el vuelo
+    // continuarPlanDeVuelo(); // Si no hay obstáculos, continuar el vuelo
   }
 
   delay(200); // Pequeña pausa para evitar ruido en las lecturas
