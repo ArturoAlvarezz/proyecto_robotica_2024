@@ -1,32 +1,22 @@
 #include <MAVLink.h>
 
-// Definición de pines para los sensores ultrasonicos
-const int pinSensorFrontal = 9; // Sensor frontal (obstáculo al frente)
-const int pinSensorSuelo = 11;  // Sensor del suelo (altura al suelo)
-long pulseWidth = 0;
-
-// Umbrales de distancia
-const int umbralObstaculo = 300;
-const int umbralSuelo = 30;
-const int distanciaDeAvance = umbralObstaculo + 50;
+uint8_t mavlinkBuf[MAVLINK_MAX_PACKET_LEN]; 
 
 void setup() {
   Serial.begin(57600);  // Configuración de MAVLink
   delay(10000);
 
   // Inicializar los pines de los sensores
-  pinMode(pinSensorFrontal, INPUT);
-  pinMode(pinSensorSuelo, INPUT);
+  pinMode(9, INPUT);
+  pinMode(11, INPUT);
 }
 
 void loop() {
-  mavlink_message_t msg;
-  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
 
   // Comprobar si existe un obstáculo al frente
-  if (medirDistancia(pinSensorFrontal) <= umbralObstaculo) {
+  if (medirDistancia(9) <= 300) {
     detenerDron(); // Si hay un obstáculo al frente, se detiene el dron
-    int32_t alturaInicial = getCurrentAltitude(); // Guardar la altitud inicial en cm
+    int alturaInicial = getCurrentAltitude(); // Guardar la altitud inicial en cm
     bajarDron();   // Bajar el dron para esquivar el obstáculo
     moveForward(); // Avanzar la distancia especificada
     subirDron(alturaInicial); // Subir la misma distancia que bajamos
@@ -39,14 +29,14 @@ void loop() {
 
 // Función para medir la distancia con un sensor ultrasonico
 int medirDistancia(int pinSensor) {
-  pulseWidth = pulseIn(pinSensor, HIGH);
+  long pulseWidth = pulseIn(pinSensor, HIGH);
   int distanciaEnCM = (pulseWidth / 147.0) * 2.54;
 
   return distanciaEnCM;
 }
 
 // Función para procesar mensajes MAVLink y obtener la altitud
-float getCurrentAltitude() {
+int getCurrentAltitude() {
   mavlink_message_t msg;
   mavlink_status_t status;
 
@@ -70,7 +60,6 @@ float getCurrentAltitude() {
 // Función para cambiar el modo del dron a "Loiter" o "Brake" vía MAVLink
 void detenerDron() {
   mavlink_message_t msg;
-  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
 
   // Comando de cambio de modo a "Loiter" o "Brake"
   mavlink_msg_command_long_pack(
@@ -86,13 +75,13 @@ void detenerDron() {
     0, 0, 0, 0, 0  // Parámetros adicionales no requeridos
   );
 
-  uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-  Serial.write(buf, len);
+  uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
+  Serial.write(mavlinkBuf, len);
 }
 
 // Función para bajar el dron hasta que no haya nada enfrente
 void bajarDron() {
-  while (medirDistancia(pinSensorFrontal) < 550) {
+  while (medirDistancia(9) < 550) {
     gradualDescent(); // Baja el dron en 15 cm
     delay(1000); // Esperar un segundo entre cada descenso
   }
@@ -101,14 +90,13 @@ void bajarDron() {
 // Función para descender el dron en pequeños intervalos
 void gradualDescent() {
   mavlink_message_t msg;
-  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
 
   // Suponiendo que tienes la altitud actual del dron en una variable
-  float currentAltitude = getCurrentAltitude(); // Altitud actual en cm
-  float targetAltitude = currentAltitude - 15;  // Bajar 15 cm
+  int currentAltitude = getCurrentAltitude(); // Altitud actual en cm
+  int targetAltitude = currentAltitude - 15;  // Bajar 15 cm
 
   // Evitar altitudes negativas o muy cercanas al suelo
-  if ( medirDistancia(pinSensorSuelo) < umbralSuelo) {
+  if ( medirDistancia(11) < 30) {
     targetAltitude = (currentAltitude - 20) * 10; // Bajar 20 cm
     mavlink_msg_command_long_pack(
       1,     // ID del sistema (por lo general 1 para el dron)
@@ -120,6 +108,8 @@ void gradualDescent() {
       0,     // Confirmation
       0, 0, targetAltitude, 0, 0, 0, 0  // Solo configuramos la altitud en el tercer parámetro
     );
+    uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
+    Serial.write(mavlinkBuf, len);
     desarmarDron(); // Desarmar el dron si está muy cerca del suelo
   }
 
@@ -138,19 +128,18 @@ void gradualDescent() {
     0, 0, targetAltitude, 0, 0, 0, 0  // Solo configuramos la altitud en el tercer parámetro
   );
 
-  uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-  Serial.write(buf, len);
+  uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
+  Serial.write(mavlinkBuf, len);
 }
 
 // Función para avanzar una distancia específica en metros
 void moveForward() {
   mavlink_message_t msg;
-  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
 
   // Valores de posición relativa (adelante en el eje X)
-  float targetX = distanciaDeAvance*10;  // Moverse hacia adelante la distancia especificada
-  float targetY = 0;  // Mantener la misma posición en Y
-  float targetZ = 0;  // Mantener la misma altitud
+  int targetX = 350*10;  // Moverse hacia adelante la distancia especificada
+  int targetY = 0;  // Mantener la misma posición en Y
+  int targetZ = 0;  // Mantener la misma altitud
   uint16_t typeMask = 0b111111000111;  // Ignorar velocidades y aceleración
 
   // Comando para enviar la posición objetivo
@@ -170,19 +159,18 @@ void moveForward() {
   );
 
   // Convertir el mensaje MAVLink en un buffer y enviarlo
-  uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-  Serial.write(buf, len);
+  uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
+  Serial.write(mavlinkBuf, len);
 }
 
 // Función para subir el dron una distancia específica en metros
-void subirDron(int32_t alturaInicial) {
+void subirDron(int alturaInicial) {
   mavlink_message_t msg;
-  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
 
   // Valores de posición relativa (subir en el eje Z)
-  float targetX = 0;  // Mantener la misma posición en X
-  float targetY = 0;  // Mantener la misma posición en Y
-  float targetZ = alturaInicial * 10;  // Subir la distancia especificada
+  int targetX = 0;  // Mantener la misma posición en X
+  int targetY = 0;  // Mantener la misma posición en Y
+  int targetZ = alturaInicial * 10;  // Subir la distancia especificada
   uint16_t typeMask = 0b111111000111;  // Ignorar velocidades y aceleración
 
   // Comando para enviar la posición objetivo
@@ -201,10 +189,15 @@ void subirDron(int32_t alturaInicial) {
     0, 0                    // Yaw y velocidad de yaw ignoradas
   );
 
+  // Convertir el mensaje MAVLink en un buffer y enviarlo
+  uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
+  Serial.write(mavlinkBuf, len);
+}
+
+
 // Función para continuar el plan de vuelo
 void continuarPlanDeVuelo() {
     mavlink_message_t msg;
-    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
 
     // Cambiar al modo automático para retomar el plan de vuelo
     mavlink_msg_command_long_pack(
@@ -219,39 +212,13 @@ void continuarPlanDeVuelo() {
         0, 0, 0, 0, 0, 0          // Otros parámetros no usados
     );
 
-    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-    Serial.write(buf, len);
-}
-  // Convertir el mensaje MAVLink en un buffer y enviarlo
-  uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-  Serial.write(buf, len);
-}
-
-// Función para armar el dron
-void armarDron() {
-    mavlink_message_t msg;
-    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
-
-    mavlink_msg_command_long_pack(
-        1,                         // ID del sistema
-        MAV_COMP_ID_SYSTEM_CONTROL,// ID del componente
-        &msg,
-        1,                         // Destino: ID del sistema
-        MAV_COMP_ID_AUTOPILOT1,    // Componente (usualmente autopiloto)
-        MAV_CMD_COMPONENT_ARM_DISARM, // Comando para armar/desarmar
-        0,                         // Confirmación
-        1,                         // Armado (1 para armar, 0 para desarmar)
-        0, 0, 0, 0, 0, 0          // Otros parámetros no usados
-    );
-
-    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-    Serial.write(buf, len);
+    uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
+    Serial.write(mavlinkBuf, len);
 }
 
 // Función para desarmar el dron
 void desarmarDron() {
     mavlink_message_t msg;
-    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
 
     mavlink_msg_command_long_pack(
         1,                         // ID del sistema
@@ -265,6 +232,6 @@ void desarmarDron() {
         0, 0, 0, 0, 0, 0          // Otros parámetros no usados
     );
 
-    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
-    Serial.write(buf, len);
+    uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
+    Serial.write(mavlinkBuf, len);
 }
