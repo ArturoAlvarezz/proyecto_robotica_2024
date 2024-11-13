@@ -1,54 +1,37 @@
+#include <MAVLink.h>
+
 // Definición de pines para los sensores ultrasonicos
 const int pinSensorFrontal = 9; // Sensor frontal (obstáculo al frente)
 const int pinSensorSuelo = 11;  // Sensor del suelo (altura al suelo)
 long pulseWidth = 0;
 
 // Umbrales de distancia
-const int umbralObstaculo = 200;
+const int umbralObstaculo = 300;
 const int umbralSuelo = 30;
 const int distanciaDeAvance = umbralObstaculo + 50;
 
 void setup() {
+  Serial.begin(57600);  // Configuración de MAVLink
+  delay(10000);
+
   // Inicializar los pines de los sensores
   pinMode(pinSensorFrontal, INPUT);
   pinMode(pinSensorSuelo, INPUT);
-
-  // Inicializar la comunicación serie para monitorear
-  Serial.begin(9600);
 }
 
 void loop() {
-  // Leer las distancias de los sensores
-  int distanciaFrontal = medirDistancia(pinSensorFrontal);
-  int distanciaSuelo = medirDistancia(pinSensorSuelo);
-
-  // Mostrar las distancias medidas en el monitor serial
-  Serial.print("Distancia al obstáculo (frontal): ");
-  Serial.print(distanciaFrontal);
-  Serial.println(" cm");
-
-  Serial.print("Distancia al suelo: ");
-  Serial.print(distanciaSuelo);
-  Serial.println(" cm");
+  mavlink_message_t msg;
+  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
 
   // Comprobar si existe un obstáculo al frente
-  if (distanciaFrontal <= umbralObstaculo) {
+  if (medirDistancia(pinSensorFrontal) <= umbralObstaculo) {
     detenerDron(); // Si hay un obstáculo al frente, se detiene el dron
-    int distanciaSueloInicial = distanciaSuelo; 
+    int32_t alturaInicial = getCurrentAltitude(); // Guardar la altitud inicial en cm
     bajarDron();   // Bajar el dron para esquivar el obstáculo
-
-    // Mientras haya un obstáculo al frente y el dron esté a más de 30 cm del suelo
-    while (distanciaFrontal <= umbralObstaculo && distanciaSuelo > umbralSuelo) {
-      distanciaFrontal = medirDistancia(pinSensorFrontal);
-      distanciaSuelo = medirDistancia(pinSensorSuelo);
-    }
-
-    // Si ya no hay obstáculos al frente y estamos a una altura segura, avanzamos y subimos
-    if (distanciaFrontal > umbralObstaculo && distanciaSuelo > umbralSuelo) {
-      avanzarYSubir(distanciaSueloInicial - distanciaSuelo); // Subir la misma distancia que bajamos
-    }
+    moveForward(); // Avanzar la distancia especificada
+    subirDron(alturaInicial); // Subir la misma distancia que bajamos
   } else {
-    continuarVuelo(); // Si no hay obstáculos, continuar el vuelo
+    continuarPlanDeVuelo(); // Si no hay obstáculos, continuar el vuelo
   }
 
   delay(200); // Pequeña pausa para evitar ruido en las lecturas
@@ -62,30 +45,226 @@ int medirDistancia(int pinSensor) {
   return distanciaEnCM;
 }
 
-// Función para detener el dron
+// Función para procesar mensajes MAVLink y obtener la altitud
+float getCurrentAltitude() {
+  mavlink_message_t msg;
+  mavlink_status_t status;
+
+  while (Serial.available()) {
+    uint8_t c = Serial.read();
+
+    // Si el mensaje MAVLink está completo
+    if (mavlink_parse_char(MAVLINK_COMM_0, c, &msg, &status)) {
+      // Si el mensaje es de posición global (GPS)
+      if (msg.msgid == MAVLINK_MSG_ID_GLOBAL_POSITION_INT) {
+        mavlink_global_position_int_t gpsData;
+        mavlink_msg_global_position_int_decode(&msg, &gpsData);
+
+        // convertimos de milímetros a centímetros
+        return gpsData.relative_alt / 10;
+      }
+    }
+  }
+}
+
+// Función para cambiar el modo del dron a "Loiter" o "Brake" vía MAVLink
 void detenerDron() {
-  Serial.println("Deteniendo dron...");
-  // Código para detener los motores o el sistema de vuelo
+  mavlink_message_t msg;
+  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+
+  // Comando de cambio de modo a "Loiter" o "Brake"
+  mavlink_msg_command_long_pack(
+    1,    // ID del sistema (puede ser 1 para el dron)
+    200,  // ID del componente (normalmente 200 para el controlador de vuelo)
+    &msg,
+    1,    // Target system
+    0,    // Target component
+    MAV_CMD_DO_SET_MODE, // Comando para cambiar el modo
+    0,    // Confirmation
+    0,    // Modo base (0 para GUIDED si es ArduPilot)
+    4,    // Modo personalizado (4 para LOITER en ArduPilot, verifica si es tu caso)
+    0, 0, 0, 0, 0  // Parámetros adicionales no requeridos
+  );
+
+  uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+  Serial.write(buf, len);
 }
 
-// Función para bajar el dron
+// Función para bajar el dron hasta que no haya nada enfrente
 void bajarDron() {
-  Serial.println("Bajando dron...");
-  // Código para reducir la altitud del dron
+  while (medirDistancia(pinSensorFrontal) < 550) {
+    gradualDescent(); // Baja el dron en 15 cm
+    delay(1000); // Esperar un segundo entre cada descenso
+  }
 }
 
-// Función para avanzar y subir después de evitar un obstáculo
-void avanzarYSubir(int distanciaBajada) {
-  Serial.print("Avanzar ");
-  Serial.print(distanciaDeAvance);
-  Serial.println(" cm y subir ");
-  Serial.print(distanciaBajada);
-  Serial.println(" cm...");
-  // Código para avanzar la distancia y luego subir el dron
+// Función para descender el dron en pequeños intervalos
+void gradualDescent() {
+  mavlink_message_t msg;
+  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+
+  // Suponiendo que tienes la altitud actual del dron en una variable
+  float currentAltitude = getCurrentAltitude(); // Altitud actual en cm
+  float targetAltitude = currentAltitude - 15;  // Bajar 15 cm
+
+  // Evitar altitudes negativas o muy cercanas al suelo
+  if ( medirDistancia(pinSensorSuelo) < umbralSuelo) {
+    targetAltitude = (currentAltitude - 20) * 10; // Bajar 20 cm
+    mavlink_msg_command_long_pack(
+      1,     // ID del sistema (por lo general 1 para el dron)
+      200,   // ID del componente (normalmente 200 para el controlador de vuelo)
+      &msg,
+      1,     // Target system (ID del dron)
+      0,     // Target component (ID del componente)
+      MAV_CMD_NAV_WAYPOINT,  // Comando para moverse a una posición específica (cambiamos solo la altitud)
+      0,     // Confirmation
+      0, 0, targetAltitude, 0, 0, 0, 0  // Solo configuramos la altitud en el tercer parámetro
+    );
+    desarmarDron(); // Desarmar el dron si está muy cerca del suelo
+  }
+
+  // Transformar la altitud a milímetros
+  targetAltitude *= 10;
+
+  // Comando para cambiar la altitud objetivo
+  mavlink_msg_command_long_pack(
+    1,     // ID del sistema (por lo general 1 para el dron)
+    200,   // ID del componente (normalmente 200 para el controlador de vuelo)
+    &msg,
+    1,     // Target system (ID del dron)
+    0,     // Target component (ID del componente)
+    MAV_CMD_NAV_WAYPOINT,  // Comando para moverse a una posición específica (cambiamos solo la altitud)
+    0,     // Confirmation
+    0, 0, targetAltitude, 0, 0, 0, 0  // Solo configuramos la altitud en el tercer parámetro
+  );
+
+  uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+  Serial.write(buf, len);
 }
 
-// Función para continuar el plan de vuelo si no hay obstáculos
-void continuarVuelo() {
-  Serial.println("Continuar plan de vuelo...");
-  // Código para seguir el vuelo normal
+// Función para avanzar una distancia específica en metros
+void moveForward() {
+  mavlink_message_t msg;
+  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+
+  // Valores de posición relativa (adelante en el eje X)
+  float targetX = distanciaDeAvance*10;  // Moverse hacia adelante la distancia especificada
+  float targetY = 0;  // Mantener la misma posición en Y
+  float targetZ = 0;  // Mantener la misma altitud
+  uint16_t typeMask = 0b111111000111;  // Ignorar velocidades y aceleración
+
+  // Comando para enviar la posición objetivo
+  mavlink_msg_set_position_target_local_ned_pack(
+    1,     // ID del sistema (puede ser 1 para el dron)
+    200,   // ID del componente (normalmente 200 para el controlador de vuelo)
+    &msg,
+    0,     // Time boot ms (0 para inmediato)
+    1,     // Target system
+    0,     // Target component
+    MAV_FRAME_LOCAL_NED,  // Referencia local NED
+    typeMask,             // Máscara de tipo para solo posición
+    targetX, targetY, -targetZ,  // Posiciones X, Y, Z
+    0, 0, 0,               // Velocidades ignoradas
+    0, 0, 0,               // Aceleraciones ignoradas
+    0, 0                    // Yaw y velocidad de yaw ignoradas
+  );
+
+  // Convertir el mensaje MAVLink en un buffer y enviarlo
+  uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+  Serial.write(buf, len);
+}
+
+// Función para subir el dron una distancia específica en metros
+void subirDron(int32_t alturaInicial) {
+  mavlink_message_t msg;
+  uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+
+  // Valores de posición relativa (subir en el eje Z)
+  float targetX = 0;  // Mantener la misma posición en X
+  float targetY = 0;  // Mantener la misma posición en Y
+  float targetZ = alturaInicial * 10;  // Subir la distancia especificada
+  uint16_t typeMask = 0b111111000111;  // Ignorar velocidades y aceleración
+
+  // Comando para enviar la posición objetivo
+  mavlink_msg_set_position_target_local_ned_pack(
+    1,     // ID del sistema (puede ser 1 para el dron)
+    200,   // ID del componente (normalmente 200 para el controlador de vuelo)
+    &msg,
+    0,     // Time boot ms (0 para inmediato)
+    1,     // Target system
+    0,     // Target component
+    MAV_FRAME_LOCAL_NED,  // Referencia local NED
+    typeMask,             // Máscara de tipo para solo posición
+    targetX, targetY, -targetZ,  // Posiciones X, Y, Z
+    0, 0, 0,               // Velocidades ignoradas
+    0, 0, 0,               // Aceleraciones ignoradas
+    0, 0                    // Yaw y velocidad de yaw ignoradas
+  );
+
+// Función para continuar el plan de vuelo
+void continuarPlanDeVuelo() {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+
+    // Cambiar al modo automático para retomar el plan de vuelo
+    mavlink_msg_command_long_pack(
+        1,                         // ID del sistema
+        MAV_COMP_ID_SYSTEM_CONTROL,// ID del componente
+        &msg,
+        1,                         // Destino: ID del sistema
+        MAV_COMP_ID_AUTOPILOT1,    // Componente
+        MAV_CMD_DO_SET_MODE,       // Comando para establecer modo de vuelo
+        0,                         // Confirmación
+        4,                         // Modo automático (4 para AUTO)
+        0, 0, 0, 0, 0, 0          // Otros parámetros no usados
+    );
+
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    Serial.write(buf, len);
+}
+  // Convertir el mensaje MAVLink en un buffer y enviarlo
+  uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+  Serial.write(buf, len);
+}
+
+// Función para armar el dron
+void armarDron() {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+
+    mavlink_msg_command_long_pack(
+        1,                         // ID del sistema
+        MAV_COMP_ID_SYSTEM_CONTROL,// ID del componente
+        &msg,
+        1,                         // Destino: ID del sistema
+        MAV_COMP_ID_AUTOPILOT1,    // Componente (usualmente autopiloto)
+        MAV_CMD_COMPONENT_ARM_DISARM, // Comando para armar/desarmar
+        0,                         // Confirmación
+        1,                         // Armado (1 para armar, 0 para desarmar)
+        0, 0, 0, 0, 0, 0          // Otros parámetros no usados
+    );
+
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    Serial.write(buf, len);
+}
+
+// Función para desarmar el dron
+void desarmarDron() {
+    mavlink_message_t msg;
+    uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+
+    mavlink_msg_command_long_pack(
+        1,                         // ID del sistema
+        MAV_COMP_ID_SYSTEM_CONTROL,// ID del componente
+        &msg,
+        1,                         // Destino: ID del sistema
+        MAV_COMP_ID_AUTOPILOT1,    // Componente
+        MAV_CMD_COMPONENT_ARM_DISARM, // Comando para armar/desarmar
+        0,                         // Confirmación
+        0,                         // Desarmado (1 para armar, 0 para desarmar)
+        0, 0, 0, 0, 0, 0          // Otros parámetros no usados
+    );
+
+    uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+    Serial.write(buf, len);
 }
