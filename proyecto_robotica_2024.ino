@@ -13,10 +13,28 @@ void setup() {
 }
 
 void loop() {
-  setModeGuided();
-  moverArriba(4.0);
-  delay(1000);
+    mavlink_message_t msg;
+    mavlink_status_t status;
+
+    while (Serial.available()) {
+        if (mavlink_parse_char(MAVLINK_COMM_0, Serial.read(), &msg, &status)) {
+            if (msg.msgid == MAVLINK_MSG_ID_COMMAND_ACK) {
+                mavlink_command_ack_t ack;
+                mavlink_msg_command_ack_decode(&msg, &ack);
+                Serial.print("ACK received: Command ");
+                Serial.print(ack.command);
+                Serial.print(" result ");
+                Serial.println(ack.result);
+            }
+        }
+    }
+
+    setModeGuided();
+    simpleTakeoff(4.0);
+    //moverArriba(4.0);
+    delay(1000);
 }
+
 
 // Función para medir la distancia con un sensor ultrasonico
 short medirDistancia(short pinSensor) {
@@ -107,7 +125,8 @@ void moveForward() {
   short targetX = 350*10;  // Moverse hacia adelante la distancia especificada
   short targetY = 0;  // Mantener la misma posición en Y
   short targetZ = 0;  // Mantener la misma altitud
-  uint16_t typeMask = 0b111111000111;  // Ignorar velocidades y aceleración
+  uint16_t typeMask = 0b0000111111111000; // Only ignore velocity and acceleration
+
 
   // Comando para enviar la posición objetivo
   mavlink_msg_set_position_target_local_ned_pack(
@@ -159,6 +178,27 @@ void subirDron(short alturaInicial) {
   Serial.write(mavlinkBuf, mavlink_msg_to_send_buffer(mavlinkBuf, &msg));
 }
 
+void simpleTakeoff(float alturaEnMetros) {
+    mavlink_message_t msg;
+
+    mavlink_msg_command_long_pack(
+        1,                         // System ID
+        MAV_COMP_ID_SYSTEM_CONTROL,// Component ID
+        &msg,
+        1,                         // Target system
+        MAV_COMP_ID_AUTOPILOT1,    // Target component
+        MAV_CMD_NAV_TAKEOFF,       // Takeoff command
+        0,                         // Confirmation
+        0, 0, 0, 0, 0, alturaEnMetros, 0 // Altitude and unused parameters
+    );
+
+    uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
+    Serial.write(mavlinkBuf, len);
+
+    Serial.println("Takeoff command sent.");
+}
+
+
 // Función para continuar el plan de vuelo
 void continuarPlanDeVuelo() {
     mavlink_message_t msg;
@@ -203,48 +243,48 @@ void armarDron() {
 void moverArriba(float alturaEnMetros) {
     mavlink_message_t msg;
 
-    // Configuración de la posición relativa
-    float targetX = 0;  // Mantener posición en X
-    float targetY = 0;  // Mantener posición en Y
-    float targetZ = -alturaEnMetros * 100;  // Subir altura (en NED, valores negativos suben)
-    uint16_t typeMask = 0b111111000111;  // Ignorar velocidades y aceleración, solo usar posición
+    float targetZ = -alturaEnMetros; // Negative for ascent in NED
+    uint16_t typeMask = 0b0000111111111000; // Ignore velocity and acceleration
 
-    // Comando para enviar la posición relativa
     mavlink_msg_set_position_target_local_ned_pack(
         1,                           // System ID
         MAV_COMP_ID_SYSTEM_CONTROL,  // Component ID
         &msg,
-        0,                           // Time since boot (0 = immediate)
+        0,                           // Time since boot (0 for immediate)
         1,                           // Target system
         MAV_COMP_ID_AUTOPILOT1,      // Target component
         MAV_FRAME_LOCAL_NED,         // Local NED frame
-        0b111111000111,              // Type mask (ignore velocities, accelerations)
+        typeMask,                    // Type mask
         0, 0, targetZ,               // X, Y, Z positions
-        0, 0, 0,                     // Ignore velocities
-        0, 0, 0,                     // Ignore accelerations
-        0, 0                         // Ignore yaw
+        0, 0, 0,                     // Ignore velocity
+        0, 0, 0,                     // Ignore acceleration
+        0, 0                         // Ignore yaw and yaw rate
     );
 
-    // Convertir el mensaje a formato binario y enviarlo
     uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
     Serial.write(mavlinkBuf, len);
+
+    Serial.println("Position target (ascent) command sent.");
 }
 
 void setModeGuided() {
     mavlink_message_t msg;
     mavlink_msg_command_long_pack(
-        1,                         // ID del sistema
-        MAV_COMP_ID_SYSTEM_CONTROL,// ID del componente
+        1,                         // System ID
+        MAV_COMP_ID_SYSTEM_CONTROL,// Component ID
         &msg,
         1,                         // Target system
         0,                         // Target component
-        MAV_CMD_DO_SET_MODE,       // Comando para establecer modo
+        MAV_CMD_DO_SET_MODE,       // Command for setting mode
         0,                         // Confirmation
-        1,                         // Modo base (1 para GUIDED)
-        4,                         // Modo personalizado (4 para GUIDED)
-        0, 0, 0, 0, 0             // Parámetros adicionales no usados
+        1,                         // Base mode (1 for GUIDED)
+        4,                         // Custom mode (4 for GUIDED in ArduPilot)
+        0, 0, 0, 0, 0             // Additional parameters
     );
 
     uint16_t len = mavlink_msg_to_send_buffer(mavlinkBuf, &msg);
     Serial.write(mavlinkBuf, len);
+
+    Serial.println("GUIDED mode command sent. Awaiting response...");
 }
+
