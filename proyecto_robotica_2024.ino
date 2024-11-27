@@ -206,23 +206,23 @@ void moverArriba(float alturaEnMetros) {
     // Configuración de la posición relativa
     float targetX = 0;  // Mantener posición en X
     float targetY = 0;  // Mantener posición en Y
-    float targetZ = -alturaEnMetros;  // Subir altura (en NED, valores negativos suben)
+    float targetZ = -alturaEnMetros * 100;  // Subir altura (en NED, valores negativos suben)
     uint16_t typeMask = 0b111111000111;  // Ignorar velocidades y aceleración, solo usar posición
 
     // Comando para enviar la posición relativa
     mavlink_msg_set_position_target_local_ned_pack(
-        1,                         // ID del sistema (1 para el dron)
-        MAV_COMP_ID_SYSTEM_CONTROL,// ID del componente (200 para controlador de vuelo)
+        1,                           // System ID
+        MAV_COMP_ID_SYSTEM_CONTROL,  // Component ID
         &msg,
-        0,                         // Tiempo desde boot (0 para inmediato)
-        1,                         // ID del sistema de destino
-        0,                         // ID del componente de destino
-        MAV_FRAME_LOCAL_NED,       // Referencia de posición local NED
-        typeMask,                  // Máscara de tipo (ignorar velocidades y aceleraciones)
-        targetX, targetY, targetZ, // Posición X, Y, Z relativa
-        0, 0, 0,                   // Ignorar velocidades
-        0, 0, 0,                   // Ignorar aceleraciones
-        0, 0                       // Ignorar yaw y velocidad de yaw
+        0,                           // Time since boot (0 = immediate)
+        1,                           // Target system
+        MAV_COMP_ID_AUTOPILOT1,      // Target component
+        MAV_FRAME_LOCAL_NED,         // Local NED frame
+        0b111111000111,              // Type mask (ignore velocities, accelerations)
+        0, 0, targetZ,               // X, Y, Z positions
+        0, 0, 0,                     // Ignore velocities
+        0, 0, 0,                     // Ignore accelerations
+        0, 0                         // Ignore yaw
     );
 
     // Convertir el mensaje a formato binario y enviarlo
